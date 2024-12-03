@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 import networkx as nx
+import numpy as np
 import pickle
 
 app = Flask(__name__)
@@ -81,6 +82,7 @@ def search():
         )
 
     return jsonify({"success": True, "results": response})
+    
 
 def pagerank_helper(graph, alpha=0.85, max_iter=100, tol=1e-6):
     nodes = list(graph.nodes())
@@ -138,6 +140,41 @@ def pagerank():
 
     return jsonify({"success": True, "top_papers": response})
 
+def hits_helper(graph, max_iter=100, tol=1e-6):
+    nodes = list(graph.nodes())
+    n = len(nodes)
+    node_idx = {node: i for i, node in enumerate(nodes)}
+
+    # Create adjacency matrix
+    adjacency_matrix = np.zeros((n, n))
+    for u, v in graph.edges():
+        adjacency_matrix[node_idx[u], node_idx[v]] = 1
+
+    # hub and authority scores
+    hubs = np.ones(n)
+    authorities = np.ones(n)
+
+    # Power iteration
+    for _ in range(max_iter):
+        # Update authority scores
+        new_authorities = adjacency_matrix.T @ hubs
+        # Update hub scores
+        new_hubs = adjacency_matrix @ new_authorities
+
+        # Normalize scores
+        new_authorities /= np.linalg.norm(new_authorities, ord=2)
+        new_hubs /= np.linalg.norm(new_hubs, ord=2)
+
+        if np.allclose(hubs, new_hubs, atol=tol) and np.allclose(authorities, new_authorities, atol=tol):
+            break
+
+        hubs = new_hubs
+        authorities = new_authorities
+
+    hub_scores = {node: hubs[i] for node, i in node_idx.items()}
+    authority_scores = {node: authorities[i] for node, i in node_idx.items()}
+
+    return hub_scores, authority_scores
 
 @app.route("/hits", methods=["GET"])
 def hits():
@@ -151,13 +188,11 @@ def hits():
     ]
     subgraph = citation_graph.subgraph(matching_papers)
 
-    # Get HITS scores
-    hub_scores, authority_scores = nx.hits(subgraph)
+    # Compute HITS scores
+    hub_scores, authority_scores = hits_helper(subgraph)
 
-    # Get top 10
-    top_authority = sorted(authority_scores.items(), key=lambda x: x[1], reverse=True)[
-        :10
-    ]
+    # Get top 10 results
+    top_authority = sorted(authority_scores.items(), key=lambda x: x[1], reverse=True)[:10]
     top_hub = sorted(hub_scores.items(), key=lambda x: x[1], reverse=True)[:10]
 
     response = {
