@@ -82,6 +82,37 @@ def search():
 
     return jsonify({"success": True, "results": response})
 
+def pagerank_helper(graph, alpha=0.85, max_iter=100, tol=1e-6):
+    nodes = list(graph.nodes())
+    n = len(nodes)
+    node_idx = {node: i for i, node in enumerate(nodes)}
+
+    # Create adjacency matrix
+    adjacency_matrix = np.zeros((n, n))
+    for u, v in graph.edges():
+        adjacency_matrix[node_idx[u], node_idx[v]] = 1
+
+    # Handle dangling nodes
+    out_degree = adjacency_matrix.sum(axis=1)
+    for i in range(n):
+        if out_degree[i] == 0:
+            adjacency_matrix[i] = 1 / n
+
+    # Normalize the adjacency matrix to create the transition matrix
+    transition_matrix = adjacency_matrix / adjacency_matrix.sum(axis=1, keepdims=True)
+
+    ranks = np.ones(n) / n
+
+    # Power iteration
+    for _ in range(max_iter):
+        new_ranks = alpha * (transition_matrix @ ranks) + (1 - alpha) / n
+        if np.allclose(ranks, new_ranks, atol=tol):
+            break
+        ranks = new_ranks
+
+    pagerank_scores = {node: ranks[i] for node, i in node_idx.items()}
+
+    return pagerank_scores
 
 @app.route("/pagerank", methods=["GET"])
 def pagerank():
@@ -96,10 +127,10 @@ def pagerank():
     ]
     subgraph = citation_graph.subgraph(matching_papers)
 
-    # Gete PageRank
-    pagerank_scores = nx.pagerank(subgraph, alpha=alpha)
+    # Compute PageRank scores
+    pagerank_scores = pagerank_helper(subgraph, alpha=alpha)
 
-    # Return top 10
+    # Get top 10 results
     top_papers = sorted(pagerank_scores.items(), key=lambda x: x[1], reverse=True)[:10]
     response = [
         {"paper_id": paper_id, "score": score} for paper_id, score in top_papers
