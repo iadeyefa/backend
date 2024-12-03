@@ -41,9 +41,11 @@ def search():
 
     pagerank_weight = pagerank_weight / 2
 
+    # O(n*k) time complexity where k is iterations
     hits_hub_scores, hits_authority_scores = nx.hits(citation_graph)
     pagerank_scores = nx.pagerank(citation_graph)
 
+    # O(n) time complexity
     hits_hub_scores = normalize_scores(hits_hub_scores)
     hits_authority_scores = normalize_scores(hits_authority_scores)
     pagerank_scores = normalize_scores(pagerank_scores)
