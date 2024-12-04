@@ -1,18 +1,8 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import networkx as nx
 import numpy as np
 import pickle
-
-app = Flask(__name__)
-
-with open("outputs/citation_graph.pkl", "rb") as fi:
-    citation_graph = pickle.load(fi)
-
-
-@app.route("/")
-def home():
-    return "Home Page Working"
-
 
 # uses min max normalization
 def normalize_scores(scores):
@@ -22,10 +12,22 @@ def normalize_scores(scores):
         scores[node] = (scores[node] - min_score) / (max_score - min_score)
     return scores
 
+app = Flask(__name__)
+CORS(app)
+
+with open("outputs/citation_graph.pkl", "rb") as fi:
+    citation_graph = pickle.load(fi)
+    pagerank_scores = nx.pagerank(citation_graph)
+    pagerank_scores = normalize_scores(pagerank_scores)
+
+@app.route("/")
+def home():
+    return "Home Page Working"
 
 # search endpoint with multiple weights
 @app.route("/search", methods=["GET"])
 def search():
+    query = request.args.get("query", "").lower()
     number_of_results = int(request.args.get("number_of_results", 10))
     salsa_weight = float(request.args.get("salsa", 0))
     hits_weight = float(request.args.get("hits", 1))
@@ -41,16 +43,22 @@ def search():
     hits_authority_weight /= 2
     pagerank_weight /= 2
 
-    hits_hub_scores, hits_authority_scores = nx.hits(citation_graph)
-    pagerank_scores = nx.pagerank(citation_graph)
+
+    # Filter graph
+    matching_papers = citation_graph.subgraph([
+        node
+        for node, data in citation_graph.nodes(data=True)
+        if query in data.get("title", "").lower()
+    ])
+
+    hits_hub_scores, hits_authority_scores = nx.hits(matching_papers)
 
     hits_hub_scores = normalize_scores(hits_hub_scores)
     hits_authority_scores = normalize_scores(hits_authority_scores)
-    pagerank_scores = normalize_scores(pagerank_scores)
 
     # O(n) time complexity
     overall_scores = {}
-    for node in citation_graph.nodes():
+    for node in matching_papers.nodes():
         overall_scores[node] = (
             hits_weight
             * (
@@ -80,10 +88,14 @@ def search():
         )
         top_paper_ids.append(paper_id)
 
-    subgraph = citation_graph.subgraph(top_paper_ids)
+    # Include citations of citations
+    subgraph = nx.subgraph(citation_graph, top_paper_ids +
+        [node for node in citation_graph if any(neighbor in top_paper_ids for neighbor in citation_graph[node])] +
+        [neighbor for paper_id in top_paper_ids for neighbor in citation_graph.neighbors(paper_id)]
+    )
     subgraph_data = nx.readwrite.json_graph.node_link_data(subgraph)
 
-    return jsonify({"success": True, "results": response, "subgraph": subgraph_data})    
+    return jsonify({"success": True, "results": response, "subgraph": subgraph_data})
 
 def pagerank_helper(graph, alpha=0.85, max_iter=100, tol=1e-6):
     nodes = list(graph.nodes())
@@ -117,21 +129,19 @@ def pagerank_helper(graph, alpha=0.85, max_iter=100, tol=1e-6):
 
     return pagerank_scores
 
-@app.route("/pagerank", methods=["GET"])
-def pagerank():
-    query = request.args.get("query", "").lower()
-    alpha = float(request.args.get("alpha", 0.85))
+def pagerank(graph,alpha = 0.85):
+    # query = request.args.get("query", "").lower()
 
-    # Filter graph
-    matching_papers = [
-        node
-        for node, data in citation_graph.nodes(data=True)
-        if query in data.get("title", "").lower()
-    ]
-    subgraph = citation_graph.subgraph(matching_papers)
+    # # Filter graph
+    # matching_papers = [
+    #     node
+    #     for node, data in citation_graph.nodes(data=True)
+    #     if query in data.get("title", "").lower()
+    # ]
+    # subgraph = citation_graph.subgraph(matching_papers)
 
     # Compute PageRank scores
-    pagerank_scores = pagerank_helper(subgraph, alpha=alpha)
+    pagerank_scores = pagerank_helper(graph, alpha=alpha)
 
     # Get top 10 results
     top_papers = sorted(pagerank_scores.items(), key=lambda x: x[1], reverse=True)[:10]
@@ -177,20 +187,19 @@ def hits_helper(graph, max_iter=100, tol=1e-6):
 
     return hub_scores, authority_scores
 
-@app.route("/hits", methods=["GET"])
-def hits():
-    query = request.args.get("query", "").lower()
+def hits(graph):
+    # query = request.args.get("query", "").lower()
 
-    # Filter graph
-    matching_papers = [
-        node
-        for node, data in citation_graph.nodes(data=True)
-        if query in data.get("title", "").lower()
-    ]
-    subgraph = citation_graph.subgraph(matching_papers)
+    # # Filter graph
+    # matching_papers = [
+    #     node
+    #     for node, data in citation_graph.nodes(data=True)
+    #     if query in data.get("title", "").lower()
+    # ]
+    # subgraph = citation_graph.subgraph(matching_papers)
 
     # Compute HITS scores
-    hub_scores, authority_scores = hits_helper(subgraph)
+    hub_scores, authority_scores = hits_helper(graph)
 
     # Get top 10 results
     top_authority = sorted(authority_scores.items(), key=lambda x: x[1], reverse=True)[:10]
